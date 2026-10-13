@@ -3,6 +3,9 @@
 A machine-learning project that uses photometric observations from the
 **Sloan Digital Sky Survey (SDSS DR17)** to estimate galaxy redshift.
 
+For a step-by-step explanation of the pipeline, files, outputs, and terms,
+read [PROJECT_GUIDE.md](PROJECT_GUIDE.md).
+
 ## The Idea
 
 Galaxies emit light across different wavelengths. SDSS measures each galaxy's
@@ -24,13 +27,10 @@ Galaxy photometry (u, g, r, i, z)  →  ML Model  →  Predicted redshift
 ├── src/
 │   ├── data_loading.py      # Download data from SDSS SkyServer
 │   ├── preprocessing.py     # Clean and filter data
-│   ├── features.py          # Compute colors and feature sets
-│   ├── models.py            # ML model wrappers
-│   └── evaluation.py        # Metrics and plotting
+│   └── eda.py               # Exploratory plots and summaries
 ├── results/
 │   ├── figures/             # Saved plots
 │   └── metrics/             # Saved metric tables
-├── docs/                    # Design decisions and SDSS schema notes
 ├── requirements.txt
 └── README.md
 ```
@@ -44,9 +44,21 @@ pip install -r requirements.txt
 # 2. Download ~50,000 galaxies from SDSS DR17
 python src/data_loading.py
 
-# 3. Open the exploration notebook
-jupyter lab notebooks/
+# 3. Clean the data and add adjacent-band colors
+python src/preprocessing.py
+
+# 4. Create EDA plots and summary tables
+python src/eda.py
 ```
+
+To run validation, preprocessing, color construction, and EDA together with
+progress output, use the primary pipeline script:
+
+```bash
+python run_pipeline.py
+```
+
+The pipeline reads the existing raw CSV and does not download or overwrite it.
 
 ## Data Source
 
@@ -54,3 +66,46 @@ jupyter lab notebooks/
 - **Release**: DR17
 - **API**: SkyServer SQL Search (no account required)
 - **Sample**: ~50,000 galaxies with spectroscopic redshift in range 0.01–0.5
+
+## Data and Reproducible Workflow
+
+The raw CSV is stored in `data/raw/` and is never modified. The processed CSV
+and cleaning report are written to `data/processed/`. The raw file contains:
+
+| Column | Meaning |
+|---|---|
+| `objID` | SDSS object identifier; excluded from model features |
+| `modelMag_u` through `modelMag_z` | Five-band SDSS model magnitudes |
+| `specz` | Spectroscopic redshift target |
+
+Validate the existing raw file with:
+
+```bash
+python src/data_loading.py --validate-existing
+```
+
+The downloader rejects invalid responses, checks the schema, detects sentinel
+values such as `-9999`, and refuses to overwrite an existing raw CSV unless
+`--force` is supplied. Raw measurement sentinels are reported and handled by
+the preprocessing step rather than changed in place.
+
+Create the modeling dataset with:
+
+```bash
+python src/preprocessing.py
+```
+
+This removes rows with invalid targets or unusable measurements in any band,
+removes duplicate object IDs, and computes the adjacent colors `u-g`, `g-r`,
+`r-i`, and `i-z`. Row counts for each filtering stage are saved in
+`data/processed/cleaning_report.csv`.
+
+Create the initial EDA outputs with:
+
+```bash
+python src/eda.py
+```
+
+This saves photometry and redshift distributions, colors versus spectroscopic
+redshift, a correlation matrix, descriptive statistics, and correlation data
+under `results/`.

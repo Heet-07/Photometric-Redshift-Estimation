@@ -14,9 +14,13 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# Data (raw data is large, keep out of git)
-data/raw/*.csv
-data/processed/*.csv
+# Generated data and analysis outputs
+# Keep only directory placeholders so a fresh clone has the expected layout.
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+results/
 
 # IDE
 .vscode/
