@@ -128,3 +128,16 @@ MAD, outlier rate, per-galaxy test residuals, and diagnostic figures under
 `models/` (which is intentionally not committed). The historical notebook
 model-selection holdout was previously used during tuning; this is therefore a
 fresh reproducible diagnostic, rather than an untouched competition-style test.
+
+Additional analysis and deployment commands:
+
+```bash
+python src/model_analysis.py
+python src/refit_deployment.py
+python src/predict.py --input new_galaxies.csv --output predictions.csv
+```
+
+`model_analysis.py` compares magnitudes-only, colors-only, and combined
+features, and reports errors in redshift and brightness bins. The deployment
+refit uses all cleaned rows only after model selection; its metrics must not be
+reported as an independent test score.

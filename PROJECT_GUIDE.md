@@ -401,3 +401,9 @@ RMSE, R2, bias, normalized MAD, and the fraction of normalized residuals above
 0.15. Since the earlier notebook's holdout informed model selection, these new
 outputs should be treated as reproducible diagnostics, not an untouched final
 test claim.
+
+Feature-ablation results are written by `python src/model_analysis.py` to
+`results/metrics/feature_ablation.csv`, with slice-level results in
+`results/metrics/slice_metrics.csv`. For deployment after evaluation is frozen,
+run `python src/refit_deployment.py`; use `python src/predict.py --input
+<csv> --output <csv>` to score new rows.
