@@ -23,6 +23,7 @@ data/processed/*
 results/
 models/
 *.zip
+.pytest_tmp/
 
 # IDE
 .vscode/

@@ -52,6 +52,9 @@ python src/eda.py
 
 # 5. Train the selected tuned model and save its diagnostics
 python src/train_evaluate.py
+
+# 6. Predict from a CSV containing the five raw magnitudes
+python src/predict.py --input new_galaxies.csv --output predictions.csv
 ```
 
 To run validation, preprocessing, color construction, and EDA together with
@@ -141,3 +144,10 @@ python src/predict.py --input new_galaxies.csv --output predictions.csv
 features, and reports errors in redshift and brightness bins. The deployment
 refit uses all cleaned rows only after model selection; its metrics must not be
 reported as an independent test score.
+
+`predict.py` accepts `modelMag_u`, `modelMag_g`, `modelMag_r`, `modelMag_i`,
+and `modelMag_z`; it calculates colors internally. It defaults to the
+deployment model and preserves all input columns. Each output row receives a
+`predicted_specz`, `prediction_status`, and `invalid_reason` column. Rows with
+missing, non-numeric, non-finite, or `-9999` magnitudes are retained as
+`invalid` rather than being silently predicted.

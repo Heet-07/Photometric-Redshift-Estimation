@@ -111,7 +111,10 @@ useful for predicting redshift.
 | `run_pipeline.py` | Main script. Runs the current pipeline in order and shows progress. |
 | `src/data_loading.py` | Downloads SDSS data or validates the existing raw CSV. |
 | `src/preprocessing.py` | Cleans the raw data and calculates colors. |
+| `src/features.py` | Validates five-band photometry and calculates model colors. |
 | `src/eda.py` | Creates plots and summary tables. |
+| `src/predict.py` | Predicts from five-band CSV input using a selected model artifact. |
+| `src/refit_deployment.py` | Fits the frozen configuration on all cleaned rows for deployment. |
 | `data/raw/sdss_dr17_galaxies_raw.csv` | Original SDSS download. Do not edit it. |
 | `data/processed/sdss_dr17_galaxies_processed.csv` | Cleaned data with color columns. |
 | `data/processed/cleaning_report.csv` | Row counts after each cleaning rule. |
@@ -143,6 +146,20 @@ python run_pipeline.py
 | `results/figures/correlation_matrix.png` | Which measurements and colors change together. |
 | `results/metrics/eda_descriptive_statistics.csv` | Minimum, average, median, and maximum values. |
 | `results/metrics/eda_correlation_matrix.csv` | Numerical version of the correlation plot. |
+
+### Batch prediction
+
+The prediction interface requires only the five raw magnitude columns; colors
+are calculated by `src/features.py`:
+
+```bash
+python src/predict.py --input new_galaxies.csv --output predictions.csv
+```
+
+Deployment is the default artifact. Use `--model evaluation` when you need the
+held-out evaluation artifact instead. The input columns and row order are
+preserved. Invalid rows receive `prediction_status=invalid` and an explanatory
+`invalid_reason`; they are never silently passed to the model.
 
 ## What EDA means
 

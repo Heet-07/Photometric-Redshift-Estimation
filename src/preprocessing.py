@@ -5,16 +5,19 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+try:
+    from src.features import COLOR_COLUMNS, MAGNITUDE_COLUMNS, SENTINEL, engineer_features
+except ModuleNotFoundError:  # direct invocation: python src/preprocessing.py
+    from features import COLOR_COLUMNS, MAGNITUDE_COLUMNS, SENTINEL, engineer_features
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RAW_PATH = PROJECT_ROOT / "data" / "raw" / "sdss_dr17_galaxies_raw.csv"
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 PROCESSED_PATH = PROCESSED_DIR / "sdss_dr17_galaxies_processed.csv"
 REPORT_PATH = PROCESSED_DIR / "cleaning_report.csv"
 
-MAGNITUDE_COLUMNS = [f"modelMag_{band}" for band in "ugriz"]
 COLOR_PAIRS = [("u", "g"), ("g", "r"), ("r", "i"), ("i", "z")]
 REQUIRED_COLUMNS = ["objID", *MAGNITUDE_COLUMNS, "specz"]
-SENTINEL = -9999
 
 
 def clean_and_engineer(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -67,8 +70,9 @@ def clean_and_engineer(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         "rows_removed": int(before - len(data)),
     })
 
-    for blue, red in COLOR_PAIRS:
-        data[f"color_{blue}_{red}"] = data[f"modelMag_{blue}"] - data[f"modelMag_{red}"]
+    engineered = engineer_features(data[MAGNITUDE_COLUMNS])
+    for column in COLOR_COLUMNS:
+        data[column] = engineered[column]
 
     return data.reset_index(drop=True), pd.DataFrame(report_rows)
 

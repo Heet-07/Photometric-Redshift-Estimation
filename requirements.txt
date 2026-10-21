@@ -7,3 +7,4 @@ xgboost
 requests
 tqdm
 jupyterlab
+pytest

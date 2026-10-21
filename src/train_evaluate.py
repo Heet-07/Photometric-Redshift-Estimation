@@ -26,6 +26,7 @@ RESULTS_DIR = PROJECT_ROOT / "results"
 FIGURE_DIR, METRICS_DIR, MODELS_DIR = RESULTS_DIR / "figures", RESULTS_DIR / "metrics", PROJECT_ROOT / "models"
 FEATURE_COLUMNS = ["modelMag_u", "modelMag_g", "modelMag_r", "modelMag_i", "modelMag_z", "color_u_g", "color_g_r", "color_r_i", "color_i_z"]
 TARGET_COLUMN, SEED = "specz", 42
+ARTIFACT_VERSION = "photometric-redshift-xgb-v1"
 TUNED_PARAMS = {"colsample_bytree": 0.8, "learning_rate": 0.05, "max_depth": 8, "min_child_weight": 3, "n_estimators": 200, "subsample": 0.8}
 
 
@@ -102,7 +103,7 @@ def main() -> None:
     axes[2].scatter(residuals["modelMag_r"], residuals["residual"], s=5, alpha=.2); axes[2].axhline(0, color="red", ls="--", lw=1); axes[2].set(xlabel="r-band magnitude", ylabel="Prediction residual", title="Residuals by brightness")
     fig.suptitle(f"Tuned XGBoost diagnostics - test RMSE={metrics.iloc[2]['RMSE']:.5f}"); fig.tight_layout(); fig.savefig(FIGURE_DIR / "final_model_diagnostics.png", dpi=160, bbox_inches="tight"); plt.close(fig)
     model_path = MODELS_DIR / "xgboost_photometric_redshift.json"; model.save_model(model_path)
-    metadata = {"model_type": "xgboost.XGBRegressor", "xgboost_version": xgb.__version__, "device": device, "random_seed": SEED, "feature_columns": FEATURE_COLUMNS, "target_column": TARGET_COLUMN, "split": "stratified 80/10/10 train/validation/test", "parameters": TUNED_PARAMS, "test_metrics": metrics.iloc[2].drop("split").to_dict()}
+    metadata = {"artifact_version": ARTIFACT_VERSION, "artifact_kind": "evaluation", "model_type": "xgboost.XGBRegressor", "xgboost_version": xgb.__version__, "device": device, "random_seed": SEED, "feature_columns": FEATURE_COLUMNS, "target_column": TARGET_COLUMN, "split": "stratified 80/10/10 train/validation/test", "parameters": TUNED_PARAMS, "test_metrics": metrics.iloc[2].drop("split").to_dict()}
     (MODELS_DIR / "xgboost_photometric_redshift_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     save_tuning_artifacts()
     print(metrics.to_string(index=False, float_format=lambda value: f"{value:.6f}")); print(f"Saved model: {model_path}")
