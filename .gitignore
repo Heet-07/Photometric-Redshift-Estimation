@@ -21,6 +21,7 @@ data/raw/*
 data/processed/*
 !data/processed/.gitkeep
 results/
+models/
 
 # IDE
 .vscode/

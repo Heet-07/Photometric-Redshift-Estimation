@@ -8,7 +8,7 @@
 | What information do we use? | Brightness measurements in five SDSS filters: `u`, `g`, `r`, `i`, and `z`. |
 | Why predict redshift? | It tells us how much a galaxy's light has shifted to longer wavelengths while travelling to us. |
 | What will the model eventually produce? | A photometric redshift prediction from brightness measurements only. |
-| What are we doing now? | Preparing trustworthy data and studying its patterns before training models. |
+| What are we doing now? | Reproducing and documenting the selected tuned model. |
 
 ## The full flow
 
@@ -37,7 +37,9 @@ Next: split data, train models, evaluate predictions
 | Clean the data | Done | 37 rows removed because at least one brightness measurement was unusable. |
 | Add color features | Done | `u-g`, `g-r`, `r-i`, and `i-z` added. |
 | Explore the data | Done | Distributions, color-redshift plots, and correlations saved. |
-| Train machine-learning models | Not started | This is the next major stage. |
+| Compare machine-learning models | Done | 15 regression models evaluated. |
+| Tune leading models | Done | XGBoost, Extra Trees, and Random Forest tuned with 5-fold CV. |
+| Save reproducible final model | Done | Script saves model, metadata, metrics, and diagnostics. |
 
 ## The dataset we use
 
@@ -381,3 +383,21 @@ reliable.
 - Record every cleaning rule and removed-row count.
 - Fit future scaling and model choices using training data only.
 - Keep final test data separate until the final evaluation.
+
+## Current model result and reproducible run
+
+The recorded hyperparameter search selected XGBoost. Its original 10% holdout
+result was RMSE 0.024223 and R2 0.937211. To reproduce the current evaluation
+from the processed CSV, run:
+
+```bash
+python src/train_evaluate.py
+```
+
+It uses an 80/10/10 redshift-stratified split and writes the fitted model and
+feature metadata to `models/`, numeric metrics and per-galaxy residuals to
+`results/metrics/`, and diagnostic plots to `results/figures/`. It reports MAE,
+RMSE, R2, bias, normalized MAD, and the fraction of normalized residuals above
+0.15. Since the earlier notebook's holdout informed model selection, these new
+outputs should be treated as reproducible diagnostics, not an untouched final
+test claim.

@@ -49,6 +49,9 @@ python src/preprocessing.py
 
 # 4. Create EDA plots and summary tables
 python src/eda.py
+
+# 5. Train the selected tuned model and save its diagnostics
+python src/train_evaluate.py
 ```
 
 To run validation, preprocessing, color construction, and EDA together with
@@ -109,3 +112,19 @@ python src/eda.py
 This saves photometry and redshift distributions, colors versus spectroscopic
 redshift, a correlation matrix, descriptive statistics, and correlation data
 under `results/`.
+
+## Model training and evaluation
+
+Run the selected tuned XGBoost model with:
+
+```bash
+python src/train_evaluate.py
+```
+
+The script creates deterministic, redshift-stratified 80/10/10
+train/validation/test partitions. It writes MAE, RMSE, R2, bias, normalized
+MAD, outlier rate, per-galaxy test residuals, and diagnostic figures under
+`results/`. The fitted model and required feature metadata are saved under
+`models/` (which is intentionally not committed). The historical notebook
+model-selection holdout was previously used during tuning; this is therefore a
+fresh reproducible diagnostic, rather than an untouched competition-style test.
