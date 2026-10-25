@@ -32,14 +32,16 @@ Next: split data, train models, evaluate predictions
 
 | Step | Status | Result |
 |---|---|---|
-| Download raw SDSS data | Done | 50,000 galaxies from SDSS DR17. |
+| Download raw SDSS data | Done | 100,000 galaxies split into separate 50,000-row training and test files. |
 | Validate raw data | Done | Expected columns, valid redshift values, and unique object IDs checked. |
-| Clean the data | Done | 37 rows removed because at least one brightness measurement was unusable. |
+| Clean the data | Done | 36 training rows removed because at least one brightness measurement was unusable; all 50,000 test rows remained usable. |
 | Add color features | Done | `u-g`, `g-r`, `r-i`, and `i-z` added. |
 | Explore the data | Done | Distributions, color-redshift plots, and correlations saved. |
 | Compare machine-learning models | Done | 15 regression models evaluated. |
 | Tune leading models | Done | XGBoost, Extra Trees, and Random Forest tuned with 5-fold CV. |
-| Save reproducible final model | Done | Script saves model, metadata, metrics, and diagnostics. |
+| Save reproducible final model | Done | Script saves the evaluated model, metadata, metrics, residuals, and diagnostics. |
+| Independent test evaluation | Done | 50,000 held-out galaxies; RMSE 0.026434 and R2 0.930428. |
+| Deployment refit | Done | Frozen configuration refit on all cleaned training rows for future prediction. |
 
 ## The dataset we use
 
@@ -48,8 +50,10 @@ Next: split data, train models, evaluate predictions
 | Survey | Sloan Digital Sky Survey (SDSS) |
 | Release | DR17 |
 | Download method | SkyServer SQL query |
-| Raw rows | 50,000 |
-| Processed rows | 49,963 |
+| Raw training rows | 50,000 |
+| Raw test rows | 50,000 |
+| Processed training rows | 49,964 |
+| Processed test rows | 50,000 |
 | Redshift selection | `0.01 <= specz <= 0.5` |
 | Object selection | Spectroscopically classified galaxies with `zWarning = 0` |
 
@@ -403,24 +407,24 @@ reliable.
 
 ## Current model result and reproducible run
 
-The recorded hyperparameter search selected XGBoost. Its original 10% holdout
-result was RMSE 0.024223 and R2 0.937211. To reproduce the current evaluation
-from the processed CSV, run:
+The recorded hyperparameter search selected XGBoost. The project now keeps a
+separate 50,000-row test batch untouched until final evaluation. To reproduce
+the current evaluation, run:
 
 ```bash
 python src/train_evaluate.py
 ```
 
-It uses an 80/10/10 redshift-stratified split and writes the fitted model and
-feature metadata to `models/`, numeric metrics and per-galaxy residuals to
-`results/metrics/`, and diagnostic plots to `results/figures/`. It reports MAE,
-RMSE, R2, bias, normalized MAD, and the fraction of normalized residuals above
-0.15. Since the earlier notebook's holdout informed model selection, these new
-outputs should be treated as reproducible diagnostics, not an untouched final
-test claim.
+It trains on 49,964 cleaned training rows and evaluates on 50,000 non-overlapping
+test rows. It writes the evaluated model and metadata to `models/`, numeric
+metrics and per-galaxy residuals to `results/metrics/`, and diagnostic plots to
+`results/figures/`. The held-out test result is RMSE 0.026434, MAE 0.017679,
+R2 0.930428, and a 0.17% catastrophic-outlier fraction.
 
 Feature-ablation results are written by `python src/model_analysis.py` to
 `results/metrics/feature_ablation.csv`, with slice-level results in
-`results/metrics/slice_metrics.csv`. For deployment after evaluation is frozen,
-run `python src/refit_deployment.py`; use `python src/predict.py --input
-<csv> --output <csv>` to score new rows.
+`results/metrics/slice_metrics.csv`. After evaluation is frozen, run
+`python src/refit_deployment.py` to create the deployment artifact from all
+cleaned training rows. This artifact is intended for future unlabeled data;
+its training metrics must not replace the independent test result. Use
+`python src/predict.py --input <csv> --output <csv>` to score new rows.

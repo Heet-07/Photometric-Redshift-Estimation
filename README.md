@@ -41,19 +41,13 @@ Galaxy photometry (u, g, r, i, z)  →  ML Model  →  Predicted redshift
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Download ~50,000 galaxies from SDSS DR17
-python src/data_loading.py
+# 2. Run the complete reproducible pipeline
+python run_pipeline.py
 
-# 3. Clean the data and add adjacent-band colors
-python src/preprocessing.py
+# 3. Refit the frozen model on all cleaned training rows for deployment
+python src/refit_deployment.py
 
-# 4. Create EDA plots and summary tables
-python src/eda.py
-
-# 5. Train the selected tuned model and save its diagnostics
-python src/train_evaluate.py
-
-# 6. Predict from a CSV containing the five raw magnitudes
+# 4. Predict from a CSV containing the five raw magnitudes
 python src/predict.py --input new_galaxies.csv --output predictions.csv
 ```
 
@@ -64,19 +58,25 @@ progress output, use the primary pipeline script:
 python run_pipeline.py
 ```
 
-The pipeline reads the existing raw CSV and does not download or overwrite it.
+The pipeline downloads 100,000 galaxies only when either raw split is missing.
+It validates and creates separate 50,000-row training and test splits,
+preprocesses both, runs EDA on the training data, and evaluates XGBoost on the
+held-out test data. Existing raw files are validated and reused rather than
+silently overwritten.
 
 ## Data Source
 
 - **Survey**: Sloan Digital Sky Survey
 - **Release**: DR17
 - **API**: SkyServer SQL Search (no account required)
-- **Sample**: ~50,000 galaxies with spectroscopic redshift in range 0.01–0.5
+- **Current split**: 50,000 training rows plus a separate 50,000-row held-out test batch
+- **Sample**: 100,000 galaxies split into 50,000 training and 50,000 test rows with spectroscopic redshift in range 0.01-0.5
 
 ## Data and Reproducible Workflow
 
-The raw CSV is stored in `data/raw/` and is never modified. The processed CSV
-and cleaning report are written to `data/processed/`. The raw file contains:
+The raw CSVs are stored in `data/raw/` and are never modified. The processed
+CSVs and cleaning reports are written to `data/processed/`. The training and
+test files use the same schema:
 
 | Column | Meaning |
 |---|---|
@@ -124,13 +124,12 @@ Run the selected tuned XGBoost model with:
 python src/train_evaluate.py
 ```
 
-The script creates deterministic, redshift-stratified 80/10/10
-train/validation/test partitions. It writes MAE, RMSE, R2, bias, normalized
+The script trains on the processed training CSV and evaluates once on the
+separate processed test CSV. It writes MSE, MAE, RMSE, R2, bias, normalized
 MAD, outlier rate, per-galaxy test residuals, and diagnostic figures under
-`results/`. The fitted model and required feature metadata are saved under
-`models/` (which is intentionally not committed). The historical notebook
-model-selection holdout was previously used during tuning; this is therefore a
-fresh reproducible diagnostic, rather than an untouched competition-style test.
+`results/`. The evaluated model and metadata are saved under `models/` (which
+is intentionally not committed). The current held-out test result is RMSE
+0.026434 and R2 0.930428.
 
 Additional analysis and deployment commands:
 
@@ -142,8 +141,9 @@ python src/predict.py --input new_galaxies.csv --output predictions.csv
 
 `model_analysis.py` compares magnitudes-only, colors-only, and combined
 features, and reports errors in redshift and brightness bins. The deployment
-refit uses all cleaned rows only after model selection; its metrics must not be
-reported as an independent test score.
+refit uses all cleaned training rows only after model selection; its metrics
+must not be reported as an independent test score. The held-out test metrics
+remain the project's performance evidence.
 
 `predict.py` accepts `modelMag_u`, `modelMag_g`, `modelMag_r`, `modelMag_i`,
 and `modelMag_z`; it calculates colors internally. It defaults to the
