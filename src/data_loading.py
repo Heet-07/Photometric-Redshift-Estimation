@@ -1,14 +1,15 @@
 """
-Download galaxy data from SDSS DR17 SkyServer.
+Download galaxy data from SDSS DR17 SkyServer and split into train / test.
 
-This script sends a SQL query to the SDSS SkyServer REST API and saves
-the result as a CSV file. No account or authentication is required.
+Downloads 100,000 galaxies in a single query, then deterministically splits:
+  - First 50,000 rows → data/raw/sdss_dr17_galaxies_raw.csv       (train)
+  - Last  50,000 rows → data/raw/sdss_dr17_new_batch_raw.csv      (test)
+
+Because both files come from the same ordered API response, the split is
+guaranteed to be non-overlapping by construction — no duplicate objIDs.
 
 Usage:
     python src/data_loading.py
-
-Output:
-    data/raw/sdss_dr17_galaxies_raw.csv  (~50,000 rows)
 
 Data source:
     Sloan Digital Sky Survey, Data Release 17
@@ -27,12 +28,15 @@ from io import StringIO
 # Configuration
 # ---------------------------------------------------------------------------
 
-# SDSS SkyServer SQL Search endpoint (DR17)
 SKYSERVER_URL = "https://skyserver.sdss.org/dr17/SkyServerWS/SearchTools/SqlSearch"
 
-# Where to save the downloaded data
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "raw")
-OUTPUT_FILE = os.path.join(OUTPUT_DIR, "sdss_dr17_galaxies_raw.csv")
+OUTPUT_DIR     = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "raw")
+OUTPUT_FILE    = os.path.join(OUTPUT_DIR, "sdss_dr17_galaxies_raw.csv")    # train  (50 K)
+NEW_BATCH_FILE = os.path.join(OUTPUT_DIR, "sdss_dr17_new_batch_raw.csv")   # test   (50 K)
+
+TOTAL_ROWS = 100_000
+TRAIN_ROWS = 50_000   # first 50 K  → train
+TEST_ROWS  = 50_000   # last  50 K  → test
 
 EXPECTED_COLUMNS = [
     "objID",
@@ -43,21 +47,15 @@ MAGNITUDE_COLUMNS = [
     "modelMag_u", "modelMag_g", "modelMag_r", "modelMag_i", "modelMag_z",
 ]
 
-# The SQL query that defines our dataset.
+# Single SQL query — fetches 100 K rows with quality filters.
 #
-# What this query does:
-#   - Pulls 50,000 galaxies from SDSS DR17
-#   - Gets brightness measurements in 5 filters (u, g, r, i, z)
-#   - Gets the spectroscopic redshift (our prediction target)
-#
-# Quality filters applied:
-#   - class = 'GALAXY'   → only galaxies, not stars or quasars
-#   - zWarning = 0        → only reliable redshift measurements
-#   - z BETWEEN 0.01-0.5  → main galaxy survey redshift range
+# Quality filters:
+#   class = 'GALAXY'   → only galaxies, not stars or quasars
+#   zWarning = 0       → only reliable redshift measurements
+#   z BETWEEN 0.01-0.5 → main galaxy survey redshift range
 #
 # Column names verified against DR17 schema:
 #   https://skyserver.sdss.org/dr17/en/help/browser/browser.aspx
-#
 SQL_QUERY_TEMPLATE = """
 SELECT TOP {limit}
     p.objID,
@@ -77,8 +75,8 @@ WHERE
 """.strip()
 
 
-def build_query(limit: int = 50000) -> str:
-    """Build the documented query with a bounded result size."""
+def build_query(limit: int = TOTAL_ROWS) -> str:
+    """Build the SQL query with a bounded result size."""
     if limit < 1:
         raise ValueError("limit must be a positive integer")
     return SQL_QUERY_TEMPLATE.format(limit=int(limit))
@@ -100,32 +98,20 @@ def download_from_skyserver(query: str, max_retries: int = 3) -> pd.DataFrame:
     pd.DataFrame
         Query results as a pandas DataFrame.
     """
-    params = {
-        "cmd": query,
-        "format": "csv",
-    }
+    params = {"cmd": query, "format": "csv"}
 
     for attempt in range(1, max_retries + 1):
         print(f"  Attempt {attempt}/{max_retries}... ", end="", flush=True)
         try:
-            response = requests.get(
-                SKYSERVER_URL,
-                params=params,
-                timeout=120,  # 2-minute timeout
-            )
+            response = requests.get(SKYSERVER_URL, params=params, timeout=180)
             response.raise_for_status()
 
-            # SkyServer returns CSV text; check for error messages
             text = response.text.strip()
             if text.startswith("<"):
-                # HTML error page returned instead of CSV
                 raise ValueError(
-                    f"SkyServer returned an error page. "
-                    f"First 300 chars: {text[:300]}"
+                    f"SkyServer returned an error page. First 300 chars: {text[:300]}"
                 )
 
-            # SkyServer CSV often includes comment lines starting with '#'
-            # (e.g. '#Table1'). Strip those before parsing.
             lines = text.split("\n")
             clean_lines = [line for line in lines if not line.startswith("#")]
             clean_text = "\n".join(clean_lines).strip()
@@ -133,9 +119,7 @@ def download_from_skyserver(query: str, max_retries: int = 3) -> pd.DataFrame:
             if not clean_text:
                 raise ValueError("Response was empty after removing comment lines")
 
-            # Parse CSV
             df = pd.read_csv(StringIO(clean_text))
-
             print(f"OK — received {len(df):,} rows")
             return df
 
@@ -151,18 +135,10 @@ def download_from_skyserver(query: str, max_retries: int = 3) -> pd.DataFrame:
 
 
 def validate_dataframe(df: pd.DataFrame, minimum_rows: int = 1) -> dict:
-    """
-    Run basic sanity checks on the downloaded data.
-    Raises AssertionError if anything looks wrong.
-    """
-    # Check columns exist
+    """Run basic sanity checks. Raises AssertionError if anything looks wrong."""
     missing_columns = [col for col in EXPECTED_COLUMNS if col not in df.columns]
     assert not missing_columns, f"Missing expected columns: {missing_columns}"
-
-    # Check we got a reasonable number of rows
-    assert len(df) >= minimum_rows, f"Too few rows downloaded: {len(df)}"
-
-    # Ensure identifiers and target are numeric and usable.
+    assert len(df) >= minimum_rows, f"Too few rows: {len(df)}"
     assert pd.api.types.is_numeric_dtype(df["objID"]), "objID must be numeric"
     assert pd.api.types.is_numeric_dtype(df["specz"]), "specz must be numeric"
     assert df["objID"].is_unique, "Duplicate objID values found"
@@ -172,29 +148,23 @@ def validate_dataframe(df: pd.DataFrame, minimum_rows: int = 1) -> dict:
         col: int((~np.isfinite(numeric_frame[col].to_numpy(dtype=float))).sum())
         for col in EXPECTED_COLUMNS
     }
-    assert sum(non_finite_counts.values()) == 0, f"Non-finite values found: {non_finite_counts}"
-
-    # Check redshift range
-    assert df["specz"].min() >= 0.0, f"Negative redshift found: {df['specz'].min()}"
+    assert sum(non_finite_counts.values()) == 0, f"Non-finite values: {non_finite_counts}"
+    assert df["specz"].min() >= 0.0, f"Negative redshift: {df['specz'].min()}"
     assert df["specz"].max() <= 1.0, f"Unexpectedly high redshift: {df['specz'].max()}"
 
-    null_counts = {col: int(df[col].isna().sum()) for col in EXPECTED_COLUMNS}
-    sentinel_counts = {
-        col: int((df[col] == -9999).sum()) for col in MAGNITUDE_COLUMNS
-    }
-
+    sentinel_counts = {col: int((df[col] == -9999).sum()) for col in MAGNITUDE_COLUMNS}
     report = {
         "rows": int(len(df)),
         "columns": list(df.columns),
         "duplicate_objID_count": int(df["objID"].duplicated().sum()),
-        "null_counts": null_counts,
+        "null_counts": {col: int(df[col].isna().sum()) for col in EXPECTED_COLUMNS},
         "sentinel_counts": sentinel_counts,
         "redshift_min": float(df["specz"].min()),
         "redshift_max": float(df["specz"].max()),
         "redshift_median": float(df["specz"].median()),
     }
     print("  Validation passed")
-    print(f"  Rows: {report['rows']:,}; sentinel magnitudes: {sentinel_counts}")
+    print(f"  Rows: {report['rows']:,};  sentinel magnitudes: {sentinel_counts}")
     return report
 
 
@@ -206,71 +176,147 @@ def load_and_validate_existing(path: str) -> dict:
     return validate_dataframe(pd.read_csv(path), minimum_rows=1)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--limit", type=int, default=50000,
-                        help="maximum rows to request (default: 50000)")
-    parser.add_argument("--output", default=OUTPUT_FILE,
-                        help="raw CSV output path")
-    parser.add_argument("--force", action="store_true",
-                        help="allow replacing an existing output CSV")
-    parser.add_argument("--validate-existing", action="store_true",
-                        help="validate an existing CSV and skip downloading")
-    args = parser.parse_args()
+def _save_csv(df: pd.DataFrame, path: str) -> None:
+    """Atomically write a DataFrame to CSV using a .part temp file."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = f"{path}.part"
+    try:
+        df.to_csv(tmp, index=False)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def download_and_split(
+    total: int = TOTAL_ROWS,
+    train_size: int = TRAIN_ROWS,
+    force: bool = False,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Download `total` galaxies from SDSS DR17 in one API call, then split:
+      - First `train_size` rows → OUTPUT_FILE    (train raw)
+      - Remaining rows          → NEW_BATCH_FILE  (test  raw)
+
+    Because the split is a positional slice of a single ordered response,
+    train and test are guaranteed to be non-overlapping by construction.
+
+    Parameters
+    ----------
+    total      : total rows to download (default 100 000)
+    train_size : rows assigned to train  (default 50 000)
+    force      : re-download even if output files already exist
+
+    Returns
+    -------
+    (train_df, test_df)
+    """
+    test_size = total - train_size
 
     print("=" * 60)
-    print("SDSS DR17 Galaxy Data Download")
+    print("SDSS DR17 — Download & Split")
+    print(f"  Total download : {total:,} rows")
+    print(f"  Train split    : first {train_size:,} rows → {os.path.basename(OUTPUT_FILE)}")
+    print(f"  Test  split    : last  {test_size:,} rows → {os.path.basename(NEW_BATCH_FILE)}")
     print("=" * 60)
 
-    if args.validate_existing:
-        report = load_and_validate_existing(args.output)
-        print(report)
-        return report
+    # Use cached files if available and force=False
+    if not force and os.path.isfile(OUTPUT_FILE) and os.path.isfile(NEW_BATCH_FILE):
+        print("\nBoth split files already exist — loading from cache.")
+        print("  (Pass force=True to re-download.)")
+        train_df = pd.read_csv(OUTPUT_FILE)
+        test_df  = pd.read_csv(NEW_BATCH_FILE)
+        print(f"  Train : {len(train_df):,} rows")
+        print(f"  Test  : {len(test_df):,} rows")
+        return train_df, test_df
 
-    query = build_query(args.limit)
-    if os.path.exists(args.output) and not args.force:
-        raise FileExistsError(
-            f"Refusing to overwrite existing raw CSV: {args.output}. "
-            "Use --validate-existing or choose another --output path."
-        )
-
-    # Show the query for transparency
+    # Download
+    query = build_query(total)
     print("\nSQL Query:")
     print("-" * 40)
     print(query)
     print("-" * 40)
+    print(f"\nDownloading {total:,} rows from SkyServer...")
+    full_df = download_from_skyserver(query)
 
-    # Download
-    print("\nDownloading from SkyServer...")
-    df = download_from_skyserver(query)
+    # Validate full dataset
+    print("\nValidating full dataset...")
+    validate_dataframe(full_df, minimum_rows=total)
 
-    # Validate
-    print("\nValidating data...")
-    validate_dataframe(df, minimum_rows=1)
+    # Split by position
+    train_df = full_df.iloc[:train_size].reset_index(drop=True)
+    test_df  = full_df.iloc[train_size:].reset_index(drop=True)
 
-    # Summary
-    print(f"\nDataset summary:")
-    print(f"  Rows:    {len(df):,}")
-    print(f"  Columns: {list(df.columns)}")
-    print(f"  Redshift range: {df['specz'].min():.4f} — {df['specz'].max():.4f}")
-    print(f"  Redshift median: {df['specz'].median():.4f}")
+    # Confirm zero overlap
+    overlap = set(train_df["objID"]) & set(test_df["objID"])
+    assert len(overlap) == 0, f"Unexpected overlap of {len(overlap)} objIDs after split!"
+    print(f"  Overlap check passed — 0 shared objIDs between train and test splits.")
 
     # Save
-    output_dir = os.path.dirname(os.path.abspath(args.output))
-    os.makedirs(output_dir, exist_ok=True)
-    temporary_output = f"{args.output}.part"
-    try:
-        df.to_csv(temporary_output, index=False)
-        os.replace(temporary_output, args.output)
-    finally:
-        if os.path.exists(temporary_output):
-            os.remove(temporary_output)
-    file_size_mb = os.path.getsize(args.output) / (1024 * 1024)
-    print(f"\nSaved to: {args.output}")
-    print(f"File size: {file_size_mb:.1f} MB")
+    print(f"\nSaving train split ({len(train_df):,} rows)...")
+    _save_csv(train_df, OUTPUT_FILE)
+    print(f"  → {OUTPUT_FILE}  ({os.path.getsize(OUTPUT_FILE)/1e6:.1f} MB)")
 
-    print("\n✓ Done! Next step: run the EDA notebook.")
-    return df
+    print(f"\nSaving test split ({len(test_df):,} rows)...")
+    _save_csv(test_df, NEW_BATCH_FILE)
+    print(f"  → {NEW_BATCH_FILE}  ({os.path.getsize(NEW_BATCH_FILE)/1e6:.1f} MB)")
+
+    print("\n✓ Download and split complete.")
+    print(f"  Train : {len(train_df):,} rows  |  Test : {len(test_df):,} rows")
+    return train_df, test_df
+
+
+def fetch_new_batch(force: bool = False) -> pd.DataFrame:
+    """
+    Return the test split (50 K rows).
+
+    If the file already exists, loads from cache.
+    If not, calls download_and_split() to create both files first.
+
+    Parameters
+    ----------
+    force : re-download from API even if file exists
+
+    Returns
+    -------
+    pd.DataFrame — the 50 K test raw data
+    """
+    if not force and os.path.isfile(NEW_BATCH_FILE):
+        print(f"Loading cached test split: {NEW_BATCH_FILE}")
+        df = pd.read_csv(NEW_BATCH_FILE)
+        print(f"  Loaded {len(df):,} rows.")
+        return df
+
+    print("Test split not found — running download_and_split() first...")
+    _, test_df = download_and_split(force=force)
+    return test_df
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--total",      type=int, default=TOTAL_ROWS,
+                        help=f"total rows to download (default: {TOTAL_ROWS})")
+    parser.add_argument("--train-size", type=int, default=TRAIN_ROWS,
+                        help=f"rows assigned to train split (default: {TRAIN_ROWS})")
+    parser.add_argument("--force",      action="store_true",
+                        help="re-download even if output files already exist")
+    parser.add_argument("--validate-existing", action="store_true",
+                        help="validate existing CSVs and skip downloading")
+    args = parser.parse_args()
+
+    if args.validate_existing:
+        print("Validating existing files...")
+        r_train = load_and_validate_existing(OUTPUT_FILE)
+        r_test  = load_and_validate_existing(NEW_BATCH_FILE)
+        print(f"Train : {r_train['rows']:,} rows")
+        print(f"Test  : {r_test['rows']:,} rows")
+        return
+
+    download_and_split(
+        total=args.total,
+        train_size=args.train_size,
+        force=args.force,
+    )
 
 
 if __name__ == "__main__":
