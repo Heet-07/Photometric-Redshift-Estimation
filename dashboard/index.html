@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Redshift Observatory — SDSS photometric redshift</title>
+  <meta name="description" content="A single-page photometric redshift estimator and held-out evaluation record for SDSS five-band magnitudes.">
+  <meta name="theme-color" content="#17181a">
+  <link rel="stylesheet" href="/dashboard-assets/styles.css">
+  <script src="/dashboard-assets/dashboard.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to the estimator</a>
+
+  <div class="page">
+    <header class="masthead">
+      <p class="kicker">Sloan Digital Sky Survey DR17</p>
+      <div class="masthead-grid">
+        <h1>Redshift Observatory</h1>
+        <div class="masthead-note">
+          <p class="masthead-lede">Estimate a galaxy’s redshift from its five SDSS model magnitudes.</p>
+        </div>
+      </div>
+    </header>
+
+    <main id="main" class="page-main" tabindex="-1">
+      <section id="estimate" class="panel-section panel-section--first" aria-labelledby="estimate-title">
+        <div class="section-head">
+          <h2 id="estimate-title">Single galaxy</h2>
+          <p class="section-lede">Enter the five model magnitudes from the galaxy’s SDSS catalogue entry.</p>
+        </div>
+
+        <div class="estimate-grid">
+          <form id="estimate-form" class="estimate-form">
+            <div class="field-grid">
+              <div class="field">
+                <label for="modelMag_u">u</label>
+                <input id="modelMag_u" name="modelMag_u" type="number" step="any" inputmode="decimal" autocomplete="off" required>
+              </div>
+              <div class="field">
+                <label for="modelMag_g">g</label>
+                <input id="modelMag_g" name="modelMag_g" type="number" step="any" inputmode="decimal" autocomplete="off" required>
+              </div>
+              <div class="field">
+                <label for="modelMag_r">r</label>
+                <input id="modelMag_r" name="modelMag_r" type="number" step="any" inputmode="decimal" autocomplete="off" required>
+              </div>
+              <div class="field">
+                <label for="modelMag_i">i</label>
+                <input id="modelMag_i" name="modelMag_i" type="number" step="any" inputmode="decimal" autocomplete="off" required>
+              </div>
+              <div class="field">
+                <label for="modelMag_z">z</label>
+                <input id="modelMag_z" name="modelMag_z" type="number" step="any" inputmode="decimal" autocomplete="off" required>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button id="estimate-submit" class="btn btn-primary" type="submit">Estimate redshift</button>
+              <button id="load-example" class="btn-quiet" type="button">Load example</button>
+            </div>
+          </form>
+
+          <aside class="readout" aria-label="Redshift estimate">
+            <div class="readout-head">
+              <p class="readout-label">Redshift estimate</p>
+            </div>
+            <div id="estimate-feedback" class="estimate-feedback" role="status" aria-live="polite" aria-atomic="true">
+              <p class="readout-value"><span class="readout-prefix" aria-hidden="true">z</span><output id="prediction-value" form="estimate-form" aria-live="off">—</output></p>
+              <p id="prediction-note" class="readout-note">The evaluation sample covers z = 0.01–0.50.</p>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="batch" class="panel-section" aria-labelledby="batch-title">
+        <div class="section-head">
+          <h2 id="batch-title">Batch CSV</h2>
+        </div>
+
+        <div class="batch-grid">
+          <div class="batch-copy">
+            <p>Use one galaxy per row and include the five <code>modelMag_*</code> columns.</p>
+            <p class="batch-limits">UTF-8 · up to 5,000 rows · 2 MiB</p>
+            <a href="/dashboard-assets/example.csv" download>Download example CSV</a>
+          </div>
+
+          <form id="batch-form" class="batch-form">
+            <label class="file-field" for="batch-file">
+              <span>CSV file</span>
+              <input id="batch-file" name="file" type="file" accept=".csv,text/csv" required>
+            </label>
+            <div class="batch-actions">
+              <button class="btn btn-primary" type="submit">Predict and download</button>
+              <p id="batch-feedback" class="batch-feedback" role="status" aria-live="polite"></p>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section id="evaluation" class="panel-section" aria-labelledby="evaluation-title">
+        <div class="section-head">
+          <h2 id="evaluation-title">Model evaluation</h2>
+          <p class="section-lede">XGBoost performance on galaxies excluded from training.</p>
+        </div>
+
+        <dl class="metrics">
+          <div>
+            <dt>Test galaxies</dt>
+            <dd id="test-rows">—</dd>
+          </div>
+          <div>
+            <dt>RMSE</dt>
+            <dd id="rmse">—</dd>
+          </div>
+          <div>
+            <dt>MAE</dt>
+            <dd id="mae">—</dd>
+          </div>
+          <div>
+            <dt>R²</dt>
+            <dd id="r2">—</dd>
+          </div>
+        </dl>
+
+        <p id="evaluation-note" class="eval-note" role="status" aria-live="polite">Loading evaluation results…</p>
+
+        <div id="diagnostic-charts" class="figure-grid"></div>
+
+        <figure class="chart">
+          <figcaption class="chart-head">
+            <span class="chart-title">Redshift distribution</span>
+            <span class="chart-meta">Galaxies per bin</span>
+          </figcaption>
+          <p id="chart-message" role="status">Loading redshift distribution…</p>
+          <div id="distribution" hidden>
+            <div class="histogram" aria-hidden="true">
+              <div id="chart-scale"></div>
+              <div class="histogram-plot">
+                <div id="bars"></div>
+                <div class="chart-axis"><span>0</span><span>0.10</span><span>0.20</span><span>0.30</span><span>0.40</span><span>0.50</span></div>
+              </div>
+            </div>
+            <p class="axis-title">Spectroscopic redshift (z)</p>
+            <details class="bin-details">
+              <summary>View bin counts</summary>
+              <div class="table-wrap">
+                <table class="bin-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Redshift range</th>
+                      <th scope="col">Galaxies</th>
+                    </tr>
+                  </thead>
+                  <tbody id="bin-table"></tbody>
+                </table>
+              </div>
+            </details>
+          </div>
+        </figure>
+      </section>
+
+      <section class="panel-section" aria-labelledby="reports-title">
+        <div class="section-head">
+          <h2 id="reports-title">Training and data exploration</h2>
+        </div>
+        <details class="report-details">
+          <summary>View saved project figures</summary>
+          <p id="reports-note" class="eval-note" role="status">Loading saved figures…</p>
+          <div id="report-figures" class="figure-grid"></div>
+        </details>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>SDSS DR17 · Five magnitudes and four derived colours</p>
+      <p><a href="/docs">API documentation</a></p>
+    </footer>
+  </div>
+
+</body>
+</html>

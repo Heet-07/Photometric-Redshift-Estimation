@@ -8,3 +8,5 @@ requests
 tqdm
 jupyterlab
 pytest
+fastapi
+uvicorn[standard]

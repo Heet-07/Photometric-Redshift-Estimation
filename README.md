@@ -49,7 +49,21 @@ python src/refit_deployment.py
 
 # 4. Predict from a CSV containing the five raw magnitudes
 python src/predict.py --input new_galaxies.csv --output predictions.csv
+
+# 5. Start the dashboard and prediction API
+python -m uvicorn src.api:app --host 127.0.0.1 --port 8000
 ```
+
+Open [Redshift Observatory](http://127.0.0.1:8000/). Use **Load example**
+and **Run prediction** to score a single galaxy. **Batch prediction** accepts
+a UTF-8 CSV of up to 5,000 rows and 2 MiB, and downloads the predictions with
+the original rows and invalid-row reasons. The overview reads held-out metrics
+and the measured redshift distribution from the saved evaluation outputs.
+
+If the artifacts already exist under `models/` and `results/`, start with step
+5. On a fresh checkout, run the pipeline and deployment refit first. If a
+prediction reports that the deployment model is not loaded, run the refit and
+restart the server.
 
 To run validation, preprocessing, color construction, and EDA together with
 progress output, use the primary pipeline script:
@@ -140,7 +154,9 @@ python src/predict.py --input new_galaxies.csv --output predictions.csv
 ```
 
 `model_analysis.py` compares magnitudes-only, colors-only, and combined
-features, and reports errors in redshift and brightness bins. The deployment
+features, and reports errors in redshift and brightness bins. This exploratory
+script uses an internal split of the training catalog and its own XGBoost
+configuration. The deployment
 refit uses all cleaned training rows only after model selection; its metrics
 must not be reported as an independent test score. The held-out test metrics
 remain the project's performance evidence.
@@ -151,3 +167,23 @@ deployment model and preserves all input columns. Each output row receives a
 `predicted_specz`, `prediction_status`, and `invalid_reason` column. Rows with
 missing, non-numeric, non-finite, or `-9999` magnitudes are retained as
 `invalid` rather than being silently predicted.
+
+## Local prediction API
+
+The HTTP service loads the deployment model at startup. Start it from the
+project root with:
+
+```bash
+python -m uvicorn src.api:app --host 127.0.0.1 --port 8000
+```
+
+Check `http://127.0.0.1:8000/health`; interactive request documentation is at
+`http://127.0.0.1:8000/docs`. Send a JSON body to `POST /predict` with a `rows`
+array. Each row needs `modelMag_u`, `modelMag_g`, `modelMag_r`, `modelMag_i`,
+and `modelMag_z`. Batches are limited to 5,000 rows. The response preserves
+provided fields and adds `predicted_specz`, `prediction_status`, and
+`invalid_reason`; invalid measurements have a null prediction and an explanation.
+`POST /predict-csv` accepts a raw UTF-8 CSV body and returns a downloadable CSV.
+The service binds to localhost by default, so it is only available on the
+machine running it. Public hosting requires a separate hosting and access-control
+setup.

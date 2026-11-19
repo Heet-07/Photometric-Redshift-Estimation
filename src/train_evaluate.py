@@ -105,7 +105,7 @@ def compute_astrophysical_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dic
 
 
 def load_datasets() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load train and test datasets, verifying existence and required columns."""
+    """Load train and test datasets and reject overlapping galaxy IDs."""
     if not TRAIN_PROCESSED_PATH.is_file():
         raise FileNotFoundError(
             f"Training dataset not found: {TRAIN_PROCESSED_PATH}\n"
@@ -128,9 +128,13 @@ def load_datasets() -> tuple[pd.DataFrame, pd.DataFrame]:
     test_df = pd.read_csv(TEST_PROCESSED_PATH)
 
     for name, df in [("Train", train_df), ("Test", test_df)]:
-        missing = sorted(set(FEATURE_COLUMNS + [TARGET_COLUMN]) - set(df.columns))
+        missing = sorted(set(FEATURE_COLUMNS + [TARGET_COLUMN, "objID"]) - set(df.columns))
         if missing:
             raise ValueError(f"{name} dataset is missing columns: {missing}")
+
+    overlap = set(train_df["objID"]) & set(test_df["objID"])
+    if overlap:
+        raise ValueError(f"Processed train and test splits share {len(overlap):,} galaxy IDs")
 
     return train_df, test_df
 

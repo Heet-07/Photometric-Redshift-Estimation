@@ -7,8 +7,8 @@
 | What are we trying to predict? | A galaxy's spectroscopic redshift (`specz`). |
 | What information do we use? | Brightness measurements in five SDSS filters: `u`, `g`, `r`, `i`, and `z`. |
 | Why predict redshift? | It tells us how much a galaxy's light has shifted to longer wavelengths while travelling to us. |
-| What will the model eventually produce? | A photometric redshift prediction from brightness measurements only. |
-| What are we doing now? | Reproducing and documenting the selected tuned model. |
+| What does the model produce? | A photometric redshift estimate from five SDSS model magnitudes. |
+| How can I use it? | Open the local Redshift Observatory dashboard or run the batch CLI. |
 
 ## The full flow
 
@@ -25,7 +25,9 @@ Feature engineering: calculate colors
     ↓
 EDA: make plots and summary tables
     ↓
-Next: split data, train models, evaluate predictions
+Train XGBoost and evaluate on the held-out galaxies
+    ↓
+Refit on the cleaned training sample and serve predictions
 ```
 
 ## Current project status
@@ -88,8 +90,8 @@ able to calculate all four colors.
 |---|---:|---:|
 | Raw SDSS file | 50,000 | 0 |
 | Valid object ID and redshift | 50,000 | 0 |
-| Usable values in all five filters | 49,963 | 37 |
-| Unique object ID | 49,963 | 0 |
+| Usable values in all five filters | 49,964 | 36 |
+| Unique object ID | 49,964 | 0 |
 
 The original file is kept unchanged in `data/raw/`.
 
@@ -119,6 +121,7 @@ useful for predicting redshift.
 | `src/eda.py` | Creates plots and summary tables. |
 | `src/predict.py` | Predicts from five-band CSV input using a selected model artifact. |
 | `src/refit_deployment.py` | Fits the frozen configuration on all cleaned rows for deployment. |
+| `src/api.py` and `dashboard/` | Serve the local dashboard, evaluation summary, and prediction endpoints. |
 | `data/raw/sdss_dr17_galaxies_raw.csv` | Original SDSS download. Do not edit it. |
 | `data/processed/sdss_dr17_galaxies_processed.csv` | Cleaned data with color columns. |
 | `data/processed/cleaning_report.csv` | Row counts after each cleaning rule. |
@@ -137,9 +140,10 @@ python run_pipeline.py
 
 | Pipeline step | What it checks or creates |
 |---|---|
-| `1/3` Validate raw CSV | Checks the dataset shape, columns, IDs, redshift range, and unusable values. |
-| `2/3` Clean and add colors | Creates the processed CSV and cleaning report. |
-| `3/3` EDA | Creates figures and numerical summary tables. |
+| `1/4` Validate raw splits | Checks shape, columns, IDs, redshift range, and train/test overlap. |
+| `2/4` Clean and add colors | Creates the processed CSVs and cleaning reports. |
+| `3/4` EDA | Creates figures and numerical summary tables. |
+| `4/4` Train and evaluate | Fits XGBoost on the training split and saves the held-out results. |
 
 ### Outputs after running
 
@@ -189,7 +193,8 @@ contain every processed row.
 | NumPy | Checks numeric values and supports calculations. |
 | Matplotlib | Draws plots. |
 | Seaborn | Makes statistical plots easier to read. |
-| scikit-learn | Will be used for the machine-learning models next. |
+| scikit-learn | Provides baseline regressors, evaluation metrics, and notebook tuning. |
+| XGBoost | Provides the selected regressor for evaluation and prediction. |
 | SDSS SkyServer | Provides the real astronomy data. |
 
 ## Important terms
@@ -387,15 +392,6 @@ reliable.
 | Training sample selection is restricted | Results may not apply to every SDSS galaxy. |
 | Current range ends at `z = 0.5` | We cannot claim performance for higher-redshift galaxies. |
 
-## What happens next
-
-1. Make a reproducible training, validation, and test split.
-2. Train simple reference models first: median predictor and linear regression.
-3. Train tree-based models such as Random Forest and Gradient Boosting.
-4. Compare the feature sets: magnitudes only, colors only, and both together.
-5. Measure error with MAE, RMSE, and R².
-6. Study prediction errors against redshift and brightness.
-
 ## Rules we will keep following
 
 - Never use `specz` as an input feature.
@@ -428,3 +424,10 @@ Feature-ablation results are written by `python src/model_analysis.py` to
 cleaned training rows. This artifact is intended for future unlabeled data;
 its training metrics must not replace the independent test result. Use
 `python src/predict.py --input <csv> --output <csv>` to score new rows.
+
+The baseline and tuning notebooks document model selection. The tuning
+notebook compares candidates using its internal test split. The separate
+50,000-row evaluation is the score shown on the dashboard. The raw query
+uses `TOP` without `ORDER BY`, so use the saved raw files to reproduce this
+particular sample. The catalog covers spectroscopically confirmed galaxies in
+the range `0.01 <= specz <= 0.5`.
