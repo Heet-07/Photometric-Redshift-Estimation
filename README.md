@@ -24,59 +24,68 @@ Galaxy photometry (u, g, r, i, z)  →  ML Model  →  Predicted redshift
 │   ├── raw/                 # Original SDSS download (not modified)
 │   └── processed/           # Cleaned data ready for modeling
 ├── notebooks/               # Jupyter notebooks for exploration & modeling
+├── dashboard/               # HTML, CSS, JavaScript, and an example CSV
+├── models/                  # Generated XGBoost models and metadata
 ├── src/
-│   ├── data_loading.py      # Download data from SDSS SkyServer
-│   ├── preprocessing.py     # Clean and filter data
-│   └── eda.py               # Exploratory plots and summaries
+│   ├── data_loading.py       # Download and validate SDSS splits
+│   ├── preprocessing.py      # Clean data and add color features
+│   ├── features.py           # Shared photometry validation and color calculations
+│   ├── eda.py                # Exploratory plots and summaries
+│   ├── train_evaluate.py     # Fit XGBoost and score the held-out test split
+│   ├── model_analysis.py     # Compare feature sets and inspect data slices
+│   ├── refit_deployment.py   # Save the prediction model
+│   ├── predict.py            # Batch prediction CLI
+│   ├── api.py                # FastAPI dashboard and prediction endpoints
+│   └── dashboard_charts.py   # Render dark charts from held-out predictions
 ├── results/
 │   ├── figures/             # Saved plots
 │   └── metrics/             # Saved metric tables
+├── run_pipeline.py
 ├── requirements.txt
 └── README.md
 ```
 
-## Quick Start
+## Run the dashboard
 
-```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+From the project root, install the dependencies:
 
-# 2. Run the complete reproducible pipeline
+```powershell
+python -m pip install -r requirements.txt
+```
+
+On a fresh checkout, create the local data, evaluation, and deployment artifacts:
+
+```powershell
 python run_pipeline.py
-
-# 3. Refit the frozen model on all cleaned training rows for deployment
 python src/refit_deployment.py
+```
 
-# 4. Predict from a CSV containing the five raw magnitudes
-python src/predict.py --input new_galaxies.csv --output predictions.csv
+If `models/` and `results/` already contain the generated outputs, start here:
 
-# 5. Start the dashboard and prediction API
+```powershell
 python -m uvicorn src.api:app --host 127.0.0.1 --port 8000
 ```
 
-Open [Redshift Observatory](http://127.0.0.1:8000/). Use **Load example**
-and **Run prediction** to score a single galaxy. **Batch prediction** accepts
-a UTF-8 CSV of up to 5,000 rows and 2 MiB, and downloads the predictions with
-the original rows and invalid-row reasons. The overview reads held-out metrics
-and the measured redshift distribution from the saved evaluation outputs.
+Open [Redshift Observatory](http://127.0.0.1:8000/). The dark dashboard has three main workflows:
 
-If the artifacts already exist under `models/` and `results/`, start with step
-5. On a fresh checkout, run the pipeline and deployment refit first. If a
-prediction reports that the deployment model is not loaded, run the refit and
-restart the server.
+- **Single galaxy** accepts the five SDSS model magnitudes. Select **Load example** and then **Estimate redshift** for a quick demo.
+- **Batch CSV** accepts a UTF-8 CSV of up to 5,000 data rows and 2 MiB. Select **Download example CSV** to get a template. **Predict and download** returns the original input fields and prediction results, including reasons for invalid rows.
+- **Model evaluation** shows the held-out scores, predicted versus measured redshift, the residual distribution, residuals by brightness, MAE and RMSE by redshift, and the measured redshift histogram.
 
-To run validation, preprocessing, color construction, and EDA together with
-progress output, use the primary pipeline script:
+Open **Training and data exploration → View saved project figures** for the
+original figures available under `results/figures/`. Select a chart image to
+open it full size. The pipeline generates the EDA and final evaluation figures.
+Run `python src/model_analysis.py` for the feature-ablation and slice figures.
+The baseline and tuning notebooks produce their own comparison figures.
 
-```bash
-python run_pipeline.py
-```
+If predictions report that the deployment model is unavailable, run the refit
+and restart Uvicorn. If the evaluation charts are empty, check that the
+evaluation metadata and `results/metrics/test_residuals.csv` exist.
 
-The pipeline downloads 100,000 galaxies only when either raw split is missing.
-It validates and creates separate 50,000-row training and test splits,
-preprocesses both, runs EDA on the training data, and evaluates XGBoost on the
-held-out test data. Existing raw files are validated and reused rather than
-silently overwritten.
+The pipeline validates and reuses the two raw CSVs when both are present. If
+either file is missing, it downloads 100,000 galaxies and writes both
+50,000-row splits as a new pair. It then preprocesses both splits, runs EDA on
+the training data, and evaluates XGBoost on the held-out test data.
 
 ## Data Source
 
@@ -88,9 +97,9 @@ silently overwritten.
 
 ## Data and Reproducible Workflow
 
-The raw CSVs are stored in `data/raw/` and are never modified. The processed
-CSVs and cleaning reports are written to `data/processed/`. The training and
-test files use the same schema:
+The raw CSVs are stored in `data/raw/`. Preprocessing reads those files and
+writes cleaned CSVs and cleaning reports to `data/processed/`. The raw
+training and test files use the same schema:
 
 | Column | Meaning |
 |---|---|
@@ -98,18 +107,18 @@ test files use the same schema:
 | `modelMag_u` through `modelMag_z` | Five-band SDSS model magnitudes |
 | `specz` | Spectroscopic redshift target |
 
-Validate the existing raw file with:
+Validate both existing raw CSVs with:
 
 ```bash
 python src/data_loading.py --validate-existing
 ```
 
-The downloader rejects invalid responses, checks the schema, detects sentinel
-values such as `-9999`, and refuses to overwrite an existing raw CSV unless
-`--force` is supplied. Raw measurement sentinels are reported and handled by
-the preprocessing step rather than changed in place.
+The downloader checks the schema and reports sentinel values such as `-9999`.
+When both splits exist, `--force` explicitly replaces the pair with a new
+download. Keep the saved raw pair to reproduce the recorded evaluation because
+the SkyServer query uses `TOP` without `ORDER BY`.
 
-Create the modeling dataset with:
+To preprocess the training CSV by itself, run:
 
 ```bash
 python src/preprocessing.py
@@ -138,12 +147,19 @@ Run the selected tuned XGBoost model with:
 python src/train_evaluate.py
 ```
 
-The script trains on the processed training CSV and evaluates once on the
-separate processed test CSV. It writes MSE, MAE, RMSE, R2, bias, normalized
+The script trains on the processed training CSV and evaluates on the separate
+processed test CSV. It writes MSE, MAE, RMSE, R², bias, normalized
 MAD, outlier rate, per-galaxy test residuals, and diagnostic figures under
 `results/`. The evaluated model and metadata are saved under `models/` (which
-is intentionally not committed). The current held-out test result is RMSE
-0.026434 and R2 0.930428.
+is intentionally not committed). The saved run used **49,964 training
+galaxies** and **50,000 held-out galaxies**.
+
+| Held-out metric | Saved result |
+|---|---:|
+| RMSE | 0.026434 |
+| MAE | 0.017679 |
+| R² | 0.930428 |
+| Catastrophic outlier fraction | 0.17% |
 
 Additional analysis and deployment commands:
 
@@ -156,10 +172,9 @@ python src/predict.py --input new_galaxies.csv --output predictions.csv
 `model_analysis.py` compares magnitudes-only, colors-only, and combined
 features, and reports errors in redshift and brightness bins. This exploratory
 script uses an internal split of the training catalog and its own XGBoost
-configuration. The deployment
-refit uses all cleaned training rows only after model selection; its metrics
-must not be reported as an independent test score. The held-out test metrics
-remain the project's performance evidence.
+configuration. The deployment refit uses the selected settings and all cleaned
+training rows. The dashboard scores come from the separate held-out evaluation
+of the evaluation artifact.
 
 `predict.py` accepts `modelMag_u`, `modelMag_g`, `modelMag_r`, `modelMag_i`,
 and `modelMag_z`; it calculates colors internally. It defaults to the
@@ -170,20 +185,17 @@ missing, non-numeric, non-finite, or `-9999` magnitudes are retained as
 
 ## Local prediction API
 
-The HTTP service loads the deployment model at startup. Start it from the
-project root with:
+The [interactive API docs](http://127.0.0.1:8000/docs) are available while
+Uvicorn is running. The command above binds the service to localhost.
 
-```bash
-python -m uvicorn src.api:app --host 127.0.0.1 --port 8000
-```
+| Route | Purpose |
+|---|---|
+| `GET /health` | Returns 200 when the deployment model is loaded and 503 when it is unavailable. |
+| `POST /predict` | Accepts JSON with a `rows` array of up to 5,000 groups of five SDSS magnitudes. |
+| `POST /predict-csv` | Accepts a raw UTF-8 CSV body of up to 5,000 data rows and 2 MiB. Returns a CSV download. |
+| `GET /dashboard-data` | Lists the saved held-out metrics, histogram bins, and available figures. |
+| `GET /dashboard-charts/{name}` | Serves a dark diagnostic chart or one of the saved project figures. |
 
-Check `http://127.0.0.1:8000/health`; interactive request documentation is at
-`http://127.0.0.1:8000/docs`. Send a JSON body to `POST /predict` with a `rows`
-array. Each row needs `modelMag_u`, `modelMag_g`, `modelMag_r`, `modelMag_i`,
-and `modelMag_z`. Batches are limited to 5,000 rows. The response preserves
-provided fields and adds `predicted_specz`, `prediction_status`, and
-`invalid_reason`; invalid measurements have a null prediction and an explanation.
-`POST /predict-csv` accepts a raw UTF-8 CSV body and returns a downloadable CSV.
-The service binds to localhost by default, so it is only available on the
-machine running it. Public hosting requires a separate hosting and access-control
-setup.
+Both prediction routes include `predicted_specz`, `prediction_status`, and
+`invalid_reason` in their output. Invalid measurements get an empty prediction
+and a reason.

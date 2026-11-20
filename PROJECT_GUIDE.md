@@ -44,6 +44,7 @@ Refit on the cleaned training sample and serve predictions
 | Save reproducible final model | Done | Script saves the evaluated model, metadata, metrics, residuals, and diagnostics. |
 | Independent test evaluation | Done | 50,000 held-out galaxies; RMSE 0.026434 and R2 0.930428. |
 | Deployment refit | Done | Frozen configuration refit on all cleaned training rows for future prediction. |
+| Local dashboard | Done | Single-galaxy estimates, CSV downloads, held-out diagnostics, and saved project figures. |
 
 ## The dataset we use
 
@@ -84,7 +85,7 @@ Some SDSS magnitudes are stored as `-9999`.
 We need all five brightness measurements because every processed row must be
 able to calculate all four colors.
 
-### Cleaning result
+### Training split cleaning result
 
 | Stage | Rows left | Rows removed at this stage |
 |---|---:|---:|
@@ -93,7 +94,8 @@ able to calculate all four colors.
 | Usable values in all five filters | 49,964 | 36 |
 | Unique object ID | 49,964 | 0 |
 
-The original file is kept unchanged in `data/raw/`.
+The test split kept all 50,000 rows. The pipeline writes a separate cleaning
+report for each split and checks for shared galaxy IDs before training.
 
 ## What colors mean
 
@@ -119,14 +121,18 @@ useful for predicting redshift.
 | `src/preprocessing.py` | Cleans the raw data and calculates colors. |
 | `src/features.py` | Validates five-band photometry and calculates model colors. |
 | `src/eda.py` | Creates plots and summary tables. |
+| `src/train_evaluate.py` | Fits tuned XGBoost on the training split, then saves scores and residuals for the separate test split. |
+| `src/model_analysis.py` | Compares feature sets and measures error by redshift or brightness on an internal split. |
 | `src/predict.py` | Predicts from five-band CSV input using a selected model artifact. |
 | `src/refit_deployment.py` | Fits the frozen configuration on all cleaned rows for deployment. |
 | `src/api.py` and `dashboard/` | Serve the local dashboard, evaluation summary, and prediction endpoints. |
-| `data/raw/sdss_dr17_galaxies_raw.csv` | Original SDSS download. Do not edit it. |
+| `src/dashboard_charts.py` | Renders the four dark diagnostic charts from saved test residuals. |
+| `data/raw/sdss_dr17_galaxies_raw.csv` | Raw training split from SDSS. |
+| `data/raw/sdss_dr17_new_batch_raw.csv` | Raw held-out test split from SDSS. |
 | `data/processed/sdss_dr17_galaxies_processed.csv` | Cleaned data with color columns. |
 | `data/processed/cleaning_report.csv` | Row counts after each cleaning rule. |
-| `results/figures/` | Image files created during EDA. |
-| `results/metrics/` | Numerical summary tables created during EDA. |
+| `results/figures/` | Saved EDA, model comparison, and evaluation figures. |
+| `results/metrics/` | EDA tables, model scores, test residuals, and feature and slice analyses. |
 
 ## How to run the current pipeline
 
@@ -154,6 +160,33 @@ python run_pipeline.py
 | `results/figures/correlation_matrix.png` | Which measurements and colors change together. |
 | `results/metrics/eda_descriptive_statistics.csv` | Minimum, average, median, and maximum values. |
 | `results/metrics/eda_correlation_matrix.csv` | Numerical version of the correlation plot. |
+| `results/metrics/final_model_metrics.csv` | Scores and sample counts for the saved training and held-out runs. |
+| `results/metrics/test_residuals.csv` | Measured and predicted redshifts, residuals, and r-band magnitude for each test galaxy. |
+| `results/figures/final_model_diagnostics.png` | Saved XGBoost diagnostic report, including the train and test redshift distributions. |
+
+### Dashboard demo
+
+Follow the [README startup instructions](README.md#run-the-dashboard). In
+**Single galaxy**, select **Load example** and then **Estimate redshift**. The
+API validates the five magnitudes, derives four colors, and runs the saved
+deployment model. In **Batch CSV**, download the example, choose it as the
+input, and select **Predict and download**.
+
+The **Model evaluation** section uses the saved held-out metrics and
+`test_residuals.csv`. Its charts answer different questions:
+
+| Chart | How to read it |
+|---|---|
+| Predicted vs. measured redshift | The dashed diagonal marks ideal agreement. Color represents galaxy count per hexagonal bin on a log scale. |
+| Residual distribution | Bars count the differences between predicted and measured redshift. The mean residual shows the overall signed bias. |
+| Residuals by brightness | Shows how errors vary with r-band magnitude. Higher magnitude corresponds to a fainter galaxy. |
+| Error by redshift | Compares MAE and RMSE in ten equal-width bins of measured redshift. |
+| Redshift distribution | Shows which measured redshifts are common in the test sample. Open **View bin counts** for the numbers. |
+
+**Training and data exploration → View saved project figures** opens the
+gallery. Baseline comparisons, tuning, feature ablation, slice analysis, and
+EDA figures appear when their saved files are available. Each image opens
+full size when selected.
 
 ### Batch prediction
 
@@ -364,22 +397,25 @@ new galaxy.
 | Colors calculated from those magnitudes | A quantity calculated using known redshift |
 | Documented photometric quality information | Object ID used as a shortcut |
 
-### Error measures planned for later
+### Error measures reported by the project
 
 | Name | What it measures | Lower or higher is better? |
 |---|---|---|
 | MAE | Average absolute difference between prediction and true redshift | Lower |
 | RMSE | Error measure that penalizes large mistakes more strongly | Lower |
 | R² | How much of the target variation the model explains | Higher |
+| Bias | Mean signed residual. A negative value indicates underprediction on average. | Closer to zero |
+| Normalized MAD | Robust spread of residuals divided by `1 + specz`. | Lower |
+| Catastrophic outlier fraction | Share of galaxies with `abs(residual) / (1 + specz) > 0.15`. | Lower |
 
-We will also examine the residual:
+The diagnostic charts use the residual:
 
 ```text
 residual = predicted redshift - spectroscopic redshift
 ```
 
-Large residuals are useful to study because they show where the method is less
-reliable.
+Large residuals show where individual predictions are less reliable. R²
+compares squared error with a mean-redshift baseline.
 
 ## Limits of this project
 
@@ -415,19 +451,26 @@ It trains on 49,964 cleaned training rows and evaluates on 50,000 non-overlappin
 test rows. It writes the evaluated model and metadata to `models/`, numeric
 metrics and per-galaxy residuals to `results/metrics/`, and diagnostic plots to
 `results/figures/`. The held-out test result is RMSE 0.026434, MAE 0.017679,
-R2 0.930428, and a 0.17% catastrophic-outlier fraction.
+R² 0.930428, mean residual −0.001693, normalized MAD 0.016350, and a 0.17%
+catastrophic outlier fraction.
 
-Feature-ablation results are written by `python src/model_analysis.py` to
-`results/metrics/feature_ablation.csv`, with slice-level results in
-`results/metrics/slice_metrics.csv`. After evaluation is frozen, run
+Run `python src/model_analysis.py` to reproduce the feature comparison and
+slice analysis. On its 4,997-row internal evaluation split, combining
+magnitudes and colors gave RMSE 0.023426, compared with 0.026830 for
+magnitudes alone and 0.027222 for colors alone. The results are saved in
+`results/metrics/feature_ablation.csv` and `results/metrics/slice_metrics.csv`.
+
+After the configuration is selected, run
 `python src/refit_deployment.py` to create the deployment artifact from all
 cleaned training rows. This artifact is intended for future unlabeled data;
 its training metrics must not replace the independent test result. Use
 `python src/predict.py --input <csv> --output <csv>` to score new rows.
 
-The baseline and tuning notebooks document model selection. The tuning
-notebook compares candidates using its internal test split. The separate
-50,000-row evaluation is the score shown on the dashboard. The raw query
+The baseline notebook ranked Gradient Boosting first on its internal split.
+The tuning notebook used five-fold cross-validation to tune XGBoost, Extra
+Trees, and Random Forest, then compared the tuned candidates on its internal
+test split. XGBoost had the lowest RMSE in that comparison. The dashboard
+reports the separate 50,000-row held-out evaluation. The raw query
 uses `TOP` without `ORDER BY`, so use the saved raw files to reproduce this
 particular sample. The catalog covers spectroscopically confirmed galaxies in
 the range `0.01 <= specz <= 0.5`.
